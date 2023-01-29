@@ -1,0 +1,105 @@
+- hosts: all
+become: true
+vars:
+created_username: Sayid
+mysql_root_password: ITV2G439378
+ansible_python_interpreter: /usr/bin/python3
+
+tasks:
+- name: Install aptitude
+apt:
+name: aptitude
+state: latest
+update_cache: true
+
+- name: update
+apt:
+upgrade=dist
+force_apt_get=yes
+
+- name: Install python
+apt:
+name: python3-pymysql
+state: latest
+update_cache: true
+
+- name: Setup passwordless sudo
+lineinfile:
+path: /etc/sudoers
+state: present
+regexp: '^%sudo'
+line: '%sudo ALL=(ALL) NOPASSWD: ALL'
+validate: '/usr/sbin/visudo -cf %s'
+
+- name: Create a new reg user with sudo priv
+user:
+name: "{{ created_username }}"
+state: present
+groups: sudo
+append: true
+create_home: true
+
+- name: Install munin-node
+apt:
+name: munin-node
+state: latest
+update_cache: true
+
+- name: Allow monitor IP
+lineinfile: >
+dest=/etc/munin/munin-node.conf
+regexp="{{ item.regexp }}"
+line="{{ item.line }}"
+with_items:
+- { regexp: 'allow ^::1$', line: 'allow ^10\.0\.0\.62$' }
+
+- name: Install MySQL
+apt:
+name: mysql-server
+state: latest
+update_cache: true
+
+- name: Start MySQL
+ansible.builtin.systemd:
+state: started
+name: mysql.service
+
+- name: Add SQL plugins
+ansible.builtin.file:
+src: "/usr/share/munin/plugins/mysql_threads"
+dest: "/etc/munin/plugins/mysql_threads"
+state: link
+
+- name: Add SQL Plugins 2
+ansible.builtin.file:
+src: "/usr/share/munin/plugins/mysql_queries"
+dest: "/etc/munin/plugins/mysql_queries"
+state: link
+
+- name: update root passw
+mysql_user:
+login_unix_socket: /var/run/mysqld/mysqld.sock
+name: root
+password: "{{ mysql_root_password }}"
+login_user: root
+login_password: "{{ mysql_root_password }}"
+check_implicit_admin: yes
+priv: "*.*:ALL,GRANT"
+with_items:
+- "{{ ansible_hostname }}"
+- 10.0.0.80
+
+- name: create new db
+mysql_db: name=testdb state=present login_user=root login_password=ITV2G439378
+
+- name: add data to db
+copy: src=dump.sql dest=/tmp/dump.sql
+
+- name: insert data to db
+mysql_db: name=testdb state=import target=/tmp/dump.sql login_user=root login_password="{{ mysql_root_password }}"
+
+- name: restart munin
+ansible.builtin.service:
+name: munin-node
+state: restarted
+enabled: true
